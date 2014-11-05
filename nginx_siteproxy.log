@@ -1,0 +1,133 @@
+## Created this on an aws instance
+
+## Created ubuntu 10.04 LTS instance and downloaded pem key
+
+## On local desktop
+mv ~/Downloads/siteproxy.pem ~/.ssh
+chmod 400 ~/.ssh/siteproxy.pem
+ssh -i ~/.ssh/siteproxy.pem ubuntu@ec2-107-22-37-185.compute-1.amazonaws.com
+
+## On remote instance
+vim ~/.vimrc
+    set tabstop=4
+    set expandtab
+    set nowrap
+    syntax off
+sudo cp /home/ubuntu/.vimrc /root/
+
+sudo apt-get update
+sudo apt-get dist-upgrade
+
+sudo apt-get install nginx
+sudo /sbin/shutdown -r 0
+
+## Set up the required SSL Certificate files
+mkdir ~/certs
+mv domainname.com_certs.tar certs
+cd ~/certs
+tar -xf domainname.com_certs.tar
+
+sudo cp certs/www.domainname.com.crt /etc/ssl/certs/ 
+sudo cp private/www.domainname.com.key /etc/ssl/private/
+
+
+#######################################################################
+## Following setup instructions from https://help.ubuntu.com/community/Nginx/ReverseProxy and
+## http://www.ubuntugeek.com/using-nginx-as-a-reverse-proxy-to-get-the-most-out-of-your-vps.html
+#######################################################################
+sudo vim /etc/nginx/conf.d/proxy.conf
+    ## Paste in this info:
+    proxy_redirect              off;
+    proxy_ssl_session_reuse     off;
+    proxy_set_header            Host            $host;
+    proxy_set_header            X-Real-IP       $remote_addr;
+    proxy_set_header            X-Forwarded-For $proxy_add_x_forwarded_for;
+    client_max_body_size        10m;
+    client_body_buffer_size     128k;
+    client_header_buffer_size   64k;
+    proxy_connect_timeout       90;
+    proxy_send_timeout          90;
+    proxy_read_timeout          90;
+    proxy_buffer_size           16k;
+    proxy_buffers               32 4k;
+    proxy_busy_buffers_size     124k;
+
+
+#######################################################################
+## Create the conf file for QA
+#######################################################################
+cat << EOF > /etc/nginx/sites-enabled/qa.domainname.com
+server {
+  listen 80;
+  server_name qa.domainname.com;
+ 
+  access_log /var/log/nginx/access.log;
+  error_log  /var/log/nginx/error.log;
+ 
+  keepalive_timeout 70;
+ 
+  location / {
+    proxy_pass       http://py-dom.appspot.com;
+    proxy_set_header Host py-dom.appspot.com;
+ 
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+    proxy_redirect https://py-dom.appspot.com/ https://qa.domainname.com/;
+    proxy_redirect http://py-dom.appspot.com/ http://qa.domainname.com/;
+  }
+ 
+}
+server {
+  listen 443;
+  server_name qa.domainname.com;
+ 
+  access_log /var/log/nginx/access.log;
+  error_log  /var/log/nginx/error.log;
+ 
+  keepalive_timeout 70;
+ 
+  ssl  on;
+  ssl_protocols  TLSv1 TLSv1.1 TLSv1.2;
+  ssl_certificate     /etc/apache2/ssl/server.crt;
+  ssl_certificate_key /etc/apache2/ssl/server.key;
+  ssl_session_timeout  30m;
+ 
+  location / {
+    proxy_pass       https://py-dom.appspot.com;
+    proxy_set_header Host py-dom.appspot.com;
+ 
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+    proxy_redirect https://py-dom.appspot.com/ https://qa.domainname.com/;
+    proxy_redirect http://py-dom.appspot.com/ http://qa.domainname.com/;
+  }
+ 
+}
+
+EOF
+#######################################################################
+
+## Try reloading nginx:
+sudo invoke-rc.d nginx reload
+
+## Needed to adjust buffer sizes for bad gateway errors.
+## Also found this page, http://code.google.com/p/googleappengine/issues/detail?id=5075
+## that mentions a config change for goole appengine workaround that was causing many bad gateway errors.
+    ## Added this line to the config (/etc/nginx/conf.d/proxy.conf):
+    #proxy_ssl_session_reuse     off;
+
+cd /etc/nginx/sites-enabled/
+sudo cp qa.domainname.com www.domainname.com
+sudo vim www.domainname.com
+    ## Edit the file to point www.domainname.com to apps-domainname.appspot.com
+
+sudo vim redirecting_domainname.com
+    ## Add all the sites that are meant to redirect to domainname.com, like this
+    server_name domain2.com www.domain2.com
+    server_name domain3.com www.domain3.com
+
+## Reload nginx to get the prod changes:
+sudo invoke-rc.d nginx reload
+
