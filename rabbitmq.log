@@ -1,0 +1,160 @@
+##########################################################################################
+#
+# Run this on the machine(s) where the RabbitMQ queue will be located.
+#
+# In this situation, this will be on rabbit1
+#
+##########################################################################################
+
+## RabbitMQ requires the php_bcmath package. Run this to see if it is enabled:
+php -i | grep -i --color=auto bcmath
+    ## Look for a line like, BCMath support => enabled, or similar
+    ##
+    ## If it is not installed, run this:
+    sudo yum install php54_bcmath
+
+
+## If EPEL is not installed
+sudo rpm -Uvh http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+
+vim /etc/yum.repos.d/epel.repo
+    ## SET this
+    enabled=0
+
+## After getting EPEL installed and ready
+cd /tmp/
+wget http://www.rabbitmq.com/releases/rabbitmq-server/v3.2.2/rabbitmq-server-3.2.2-1.noarch.rpm
+sudo rpm --import http://www.rabbitmq.com/rabbitmq-signing-key-public.asc
+sudo yum --enablerepo=epel localinstall /tmp/rabbitmq-server-3.2.2-1.noarch.rpm
+
+sudo vim /etc/hosts
+    ## Add rabbit.mcn to be the correct ip address for rabbit1
+    192.168.137.56 rabbit.mcn
+
+sudo chkconfig rabbitmq-server on
+    chkconfig --list | grep rabbit
+
+## Command for controlling the RabbitMQ service
+sudo rabbitmqctl start_app ## Starts the RabbitMQ application. This assumes the Erlang node is already running, else do sudo service rabbitmq-server start
+sudo rabbitmqctl stop_app  ## Stops the RabbitMQ application. This will leave the Erlang node running.
+sudo rabbitmqctl stop      ## Stops the RabbitMQ application, and the Erlang node. This is equivalent to sudo service rabbitmq-server stop
+sudo rabbitmqctl status    ## Show the status of the RabbitMQ application
+
+## Enable the management plugin for web-based management
+## http://server-name:15672/
+sudo rabbitmq-plugins enable rabbitmq_management
+
+sudo service rabbitmq-server restart
+sudo rabbitmqctl status
+
+## Open TCP port 15672 in the machine firewall, otherwise the following connection will not work
+
+## In a browser on that machine, go to
+http://localhost:15672/cli/
+  -- OR --
+http://rabbit1.mcnhealthcare.com:15672/cli/
+  -- OR --
+wget http://localhost:15672/cli/rabbitmqadmin
+
+## Download the python script for the cli interface
+sudo mv rabbitmqadmin /usr/local/bin/
+sudo chmod 775 /usr/local/bin/rabbitmqadmin
+sudo chown root:devteam /usr/local/bin/rabbitmqadmin
+
+#####################################################################################################
+## In the web browser, go to the management console, http://rabbit1:15672/, remove the guest user, and add the local user
+##   Default User: guest
+##   Default Pass: guest
+##
+##   local User: Rabbit
+##   local Pass: XXXXXXXXXXX
+##
+## cat << EOF >  /home/rabbit/.rabbitmq_conf
+##   [host_normal]
+##   hostname = localhost
+##   port = 15672
+##   username = Rabbit
+##   password = XXXXXXXXXXX
+## EOF
+## 
+##  sudo chmod 600 /home/rabbit/.rabbitmq_conf
+##  sudo chown rabbit:devteam /home/rabbit/.rabbitmq_conf
+##
+#####################################################################################################
+
+## Run these commands as the rabbit user
+## Create the exchange for all the rabbit jobs
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare exchange name=jobs type=topic durable=true
+
+## Create the queues for the rabbit jobs
+## For QA
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qa.backups
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qa.reports
+
+## For QT
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qt.backups
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qt.reports
+
+## For RC
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=rc.backups
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=rc.reports
+
+## For prod
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=prod.backups
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=prod.reports
+
+## Bind the queues to the main exchange
+## For QA
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qa.backups routing_key=qa.backups
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qa.reports routing_key=qa.reports
+
+## For QT
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qt.backups routing_key=qt.backups
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qt.reports routing_key=qt.reports
+
+## For RC
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=rc.backups routing_key=rc.backups
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=rc.reports routing_key=rc.reports
+
+## For prod
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=prod.backups routing_key=prod.backups
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=prod.reports routing_key=prod.reports
+
+User: Rabbit
+Pass: XXXXXXXXXXX
+
+##########################################################################################
+##
+## Some sample cron settings
+##
+##########################################################################################
+## 
+## ## work1, primary worker machine
+## * * * * * /home/rabbit/public_html/application/cron_scripts/processReports.sh 2 >>/home/rabbit/domlogs/rabbit_reports_errors.log 2>&1
+## * * * * * /home/rabbit/public_html/application/cron_scripts/processBackups.sh 2 >>/home/rabbit/domlogs/rabbit_backups_errors.log 2>&1
+##
+##########################################################################################
+##########################################################################################
+
+
+
+
+##########################################################################################
+##########################################################################################
+## 
+## These steps were not needed, so they can be skipped for this setup
+## 
+##########################################################################################
+##########################################################################################
+
+## Setup the configuration for this machine
+## http://www.rabbitmq.com/configure.html#configuration-file
+sudo vim /etc/rabbitmq/rabbitmq.config
+
+## Setup the configuration environment for this machine
+## http://www.rabbitmq.com/configure.html#customise-general-unix-environment
+sudo vim /etc/rabbitmq/rabbitmq-env.conf
+
+## And maybe install this?????
+sudo rabbitmq-plugins enable rabbitmq_management_agent
+
