@@ -1,0 +1,119 @@
+## On file1 (where NFS mount point is coming from)
+## We are setting uid and gid because of an id conflict on this system
+sudo /usr/sbin/groupadd -g 494 elasticsearch ; sudo /usr/sbin/useradd -g 494 -u 493 -M -d /usr/share/elasticsearch -s /sbin/nologin -c "elasticsearch user" elasticsearch
+
+#######################################################################
+##
+## This setup is first done on the primary elasticsearch system, es1
+##
+#######################################################################
+## from http://www.elasticsearch.org/blog/apt-and-yum-repositories/
+## Install elasticsearch
+sudo rpm --import http://packages.elasticsearch.org/GPG-KEY-elasticsearch
+sudo vim /etc/yum.repos.d/elasticsearch.repo
+  [elasticsearch-1.0]
+  name=Elasticsearch repository for 1.0.x packages
+  baseurl=http://packages.elasticsearch.org/elasticsearch/1.0/centos
+  gpgcheck=1
+  gpgkey=http://packages.elasticsearch.org/GPG-KEY-elasticsearch
+  enabled=0
+
+sudo yum --enablerepo=elasticsearch-1.0 install elasticsearch java-1.7.0-openjdk
+
+## Set up elasticsearch directories and users
+sudo mkdir -p /mnt/store/elasticsearch/es1
+sudo chmod 2775 /mnt/store/elasticsearch
+sudo vim /etc/passwd /etc/group
+    ## Change the gid for elasticsearch to 494
+    ## Change the uid for elasticsearch to 493
+    ## This is done because of a conflict with gid and uid on file1 (where the files are served from)
+sudo chown -R elasticsearch:elasticsearch /mnt/store/elasticsearch/ /var/lib/elasticsearch/ /var/log/elasticsearch/ /var/run/elasticsearch/
+
+## Edit the config
+sudo vim /etc/elasticsearch/elasticsearch.yml
+    cluster.name: mainsearch
+    node.name: "es1.mcn"
+    path.data: /mnt/store/elasticsearch/es1
+    path.logs: /var/log/elasticsearch
+    bootstrap.mlockall: true
+    ## This is the address of the local machine
+    network.host: 192.168.137.50
+    transport.tcp.compress: true
+
+## Add elasticsearch to chkconfig
+sudo chkconfig --add elasticsearch
+sudo chkconfig --list elasticsearch
+
+## Update the memory limit that the elasticsearch JVM will use
+sudo vim /etc/sysconfig/elasticsearch
+    ES_HEAP_SIZE=4g
+
+sudo service elasticsearch restart
+    ## Wait for the indices to be repopulated
+
+#######################################################################
+##
+## This setup is next done on the secondary elasticsearch system, es2
+##
+#######################################################################
+## from http://www.elasticsearch.org/blog/apt-and-yum-repositories/
+## Install elasticsearch
+sudo rpm --import http://packages.elasticsearch.org/GPG-KEY-elasticsearch
+sudo vim /etc/yum.repos.d/elasticsearch.repo
+  [elasticsearch-1.0]
+  name=Elasticsearch repository for 1.0.x packages
+  baseurl=http://packages.elasticsearch.org/elasticsearch/1.0/centos
+  gpgcheck=1
+  gpgkey=http://packages.elasticsearch.org/GPG-KEY-elasticsearch
+  enabled=0
+
+sudo yum --enablerepo=elasticsearch-1.0 install elasticsearch java-1.7.0-openjdk
+
+## Set up elasticsearch directories and users
+sudo mkdir -p /mnt/store/elasticsearch/es2
+sudo vim /etc/passwd /etc/group
+    ## Change the gid for elasticsearch to 494
+    ## Change the uid for elasticsearch to 493
+    ## This is done because of a conflict with gid and uid on file1 and fil2
+sudo chown -R elasticsearch:elasticsearch /mnt/store/elasticsearch /var/lib/elasticsearch/ /var/log/elasticsearch/ /var/run/elasticsearch/
+
+## Edit the config
+sudo vim /etc/elasticsearch/elasticsearch.yml
+    cluster.name: mainsearch
+    node.name: "es2.mcn"
+    path.data: /mnt/store/elasticsearch/es2
+    path.logs: /var/log/elasticsearch
+    bootstrap.mlockall: true
+    ## This is the address of the local machine
+    network.host: 192.168.137.51
+    transport.tcp.compress: true
+
+## Add elasticsearch to chkconfig
+sudo chkconfig --add elasticsearch
+sudo chkconfig --list elasticsearch
+
+## Update the memory limit that the elasticsearch JVM will use
+sudo vim /etc/sysconfig/elasticsearch
+    ES_HEAP_SIZE=4g
+
+sudo service elasticsearch restart
+    ## Wait for the indices to be repopulated
+
+#######################################################################
+
+
+## Edit the hosts file on all systems to point esmaster.mcn to the load balanced node
+sudo vim /etc/hosts
+    192.168.103.253   esmaster.mcn ## Pointing to a load balanced VIP on our load balancers
+
+
+## These are some commands to just pull stats and info from the es nodes
+curl -XGET "http://$(ifconfig eth0 | sed -n 's/.*inet *addr:\([0-9\.]*\).*/\1/p'):9200/_nodes/es2.mcn/stats/os?pretty=true"
+curl -XGET "http://$(ifconfig eth0 | sed -n 's/.*inet *addr:\([0-9\.]*\).*/\1/p'):9200/_cluster/stats?pretty=true"
+
+## Installing esHQ (elastic search hq) for viewing
+cd /var/www/html/info/
+wget https://github.com/royrusso/elasticsearch-HQ/zipball/master -O royrusso-elasticsearch-HQ.zip
+unzip -x royrusso-elasticsearch-HQ.zip
+mv royrusso-elasticsearch-HQ*/ esHQ
+## Open up necessary firewall ports (9200 as the main connection)
