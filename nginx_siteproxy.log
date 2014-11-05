@@ -109,6 +109,11 @@ server {
 EOF
 #######################################################################
 
+## Need to disable SSLv3 from default config
+sudo vim /etc/nginx/nginx.conf
+    ## in the http stanza, add this line
+    ssl_protocols  TLSv1 TLSv1.1 TLSv1.2;  # don’t use SSLv3 ref: POODLE
+
 ## Try reloading nginx:
 sudo invoke-rc.d nginx reload
 
