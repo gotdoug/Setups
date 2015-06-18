@@ -90,35 +90,43 @@ sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf
 ## For QA
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qa.backups
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qa.reports
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qa.massUpdate
 
 ## For QT
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qt.backups
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qt.reports
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=qt.massUpdate
 
 ## For RC
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=rc.backups
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=rc.reports
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=rc.massUpdate
 
 ## For prod
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=prod.backups
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=prod.reports
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare queue durable=true name=prod.massUpdate
 
 ## Bind the queues to the main exchange
 ## For QA
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qa.backups routing_key=qa.backups
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qa.reports routing_key=qa.reports
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qa.massUpdate routing_key=qa.massUpdate
 
 ## For QT
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qt.backups routing_key=qt.backups
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qt.reports routing_key=qt.reports
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=qt.massUpdate routing_key=qt.massUpdate
 
 ## For RC
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=rc.backups routing_key=rc.backups
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=rc.reports routing_key=rc.reports
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=rc.massUpdate routing_key=rc.massUpdate
 
 ## For prod
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=prod.backups routing_key=prod.backups
 sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=prod.reports routing_key=prod.reports
+sudo -u rabbit /usr/local/bin/rabbitmqadmin --config=/home/rabbit/.rabbitmq_conf --node=host_normal declare binding source=jobs destination=prod.massUpdate routing_key=prod.massUpdate
 
 User: Rabbit
 Pass: XXXXXXXXXXX
@@ -135,7 +143,6 @@ Pass: XXXXXXXXXXX
 ##
 ##########################################################################################
 ##########################################################################################
-
 
 
 
