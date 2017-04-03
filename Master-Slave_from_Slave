@@ -1,0 +1,161 @@
+Proposed Steps
+################################################################################################
+## This is a basic setup to get master-slave replication working in mysql with a second slave
+## database server, when master-slave replication is already working on other servers. This
+## will allow zero downtime of the master DB server, as copies will be made from the existing
+## slave DB server.
+################################################################################################
+
+################################################################################################
+## if there is not direct root access, either on command line, or root in the DB,
+## some of these commands might need to change, slightly.
+################################################################################################
+
+################################################################################################
+## Before starting, make sure the config files for both slaves are the same,
+## except for the server_id field
+################################################################################################
+
+################################################################################################
+## Set up rsync daemon on slaveDB-1 and a6p to receive the updates.
+slaveDB-1> vim /etc/rsyncd.conf
+	max connections = 2
+	log file = /var/log/rsync.log
+	pid file = /var/run/rsync.pid
+	lock file = /var/run/rsync.lock
+	timeout = 300
+
+	[DB]
+	comment = "Syncing DB files"
+	path = /path/to/database/files
+	uid = root
+	gid = root
+	list = true
+	use chroot = no
+	read only = yes
+	list = yes
+	hosts allow = XXX.XXX.XXX.XXX/255.255.255.255 ## this is the ip address of slaveDB-2
+
+slaveDB-1> vim /etc/xinetd.d/rsync
+	# default: off
+	# description: The rsync server is a good addition to an ftp server, as it \
+	#       allows crc checksumming etc.
+	service rsync
+	{
+        disable 		= no
+        flags           = IPv6
+        socket_type     = stream
+        wait            = no
+        user            = root
+        server          = /usr/bin/rsync
+        server_args     = --daemon
+        log_on_failure  += USERID
+	}	
+
+slaveDB-1> rsync --daemon
+##
+################################################################################################
+
+
+## These will need to change for your systems
+slaveDB-1> export DB_PATH="/path/to/database/config" ## This is the location of config files, usually /etc/
+slaveDB-1> export DB_DATA_PATH="/path/to/database/files" ## This is the location of the database files themselves, usually /var/lib/mysql
+
+slaveDB-2> export DB_PATH="/path/to/database/config" ## This is the location of config files, usually /etc/
+slaveDB-2> export DB_DATA_PATH="/path/to/database/files" ## This is the location of the database files themselves, usually /var/lib/mysql
+slaveDB-2> export DB_TEMP_DATA_PATH="/path/to/database/files_NEW
+slaveDB-2> export $DB_OLD_DATA_PATH="/path/to/database/files_OLD
+
+## Pull DBs from slaveDB-1 to slaveDB-2
+## Pulling to a new temp directory, just to shorten the downtime for slaveDB-2
+slaveDB-2> cd $DB_PATH
+slaveDB-2> cp -pr $DB_DATA_PATH $DB_TEMP_DATA_PATH
+slaveDB-2> rsync -a --inplace --progress --exclude 'mysql' --exclude 'performance_schema' --exclude 'information_schema' --exclude 'sys' --exclude 'test' --exclude auto.cnf root@csadb-wc-slaveDB-1.sys.comcast.net::DB $DB_TEMP_DATA_PATH
+	## This might take a while
+slaveDB-2> cd $DB_PATH
+
+Used for reference:
+http://mah.everybody.org/docs/mysql-rsync
+https://www.stephenrlang.com/2016/08/setting-up-mysql-master-slave-replication-with-rsync/
+https://www.borfast.com/blog/2014/02/15/how-to-add-a-slave-to-a-mysql-replication-setup-with-no-downtime/
+
+######################################################################
+# After initial copies over from slaveDB-1 slave to slaveDB-2 slave have finished
+######################################################################
+slaveDB-2> mysql -u root -p -e "STOP SLAVE"
+slaveDB-2> service mysql stop
+slaveDB-2> cd $DB_PATH
+slaveDB-2> service mysql stop
+slaveDB-2> mv $DB_DATA_PATH $DB_OLD_DATA_PATH
+slaveDB-2> mv $DB_TEMP_DATA_PATH $DB_DATA_PATH
+slaveDB-2> vim my.cnf ## Make sure server_id is NOT 1 (1 will be the master, and this id has to be unique)
+				## Change binlog_format to MIXED, just in case this becomes a master at some point
+
+slaveDB-1> mysql -u root -p ## Enter mysql
+slaveDB-1 mysql> SHOW SLAVE STATUS\G
+	## Make sure the slave is 0 seconds behind master.
+	## If not, wait until it is caught up to proceed
+slaveDB-1 mysql> STOP SLAVE;
+slaveDB-1 mysql> \q;
+slaveDB-1> service mysql stop
+
+## Pull changes from slaveDB-1 to slaveDB-2
+slaveDB-2> rsync -a --inplace --progress --exclude 'mysql' --exclude 'performance_schema' --exclude 'information_schema' --exclude 'sys' --exclude 'test' --exclude auto.cnf root@csadb-wc-slaveDB-1.sys.comcast.net::DB $DB_TEMP_DATA_PATH
+	## Hopefully this doesn't take too long, as only copying the changes
+
+slaveDB-1> service mysql start
+slaveDB-1> mysql -u root -p -e "SHOW SLAVE STATUS\G" | grep -e "Seconds_Behind_Master" -e Slave_IO_Running -e Slave_SQL_Running
+	## Verify that the slave is back up and running on slaveDB-1
+	## If necessary, start the slave with
+	## mysql -u root -p -e "START SLAVE;"
+
+## mysql is still off on slaveDB-2
+slaveDB-2> cd $DB_PATH
+slaveDB-2> mv $DB_PATH/master.info DB_PATH/master.info.OLD
+slaveDB-2> mv $DB_PATH/relay-log.info DB_PATH/relay-log.info.OLD
+slaveDB-2> rm -f $DB_PATH/auto.cnf $DB_PATH/<slaveDB-1>.pid
+
+slaveDB-2> vim /etc/init.d/mysql
+		## Change other_args line (around line 109) to
+		other_args="--skip-slave-start $*"
+slaveDB-2> service mysql start
+slaveDB-2> mysql -u root -p
+	## go into mysql prompt
+slaveDB-2 mysql> stop slave;
+	## just ensures that is hasn't started somehow
+
+## Back in the terminal
+slaveDB-2> cat $DB_PATH/relay-log.info.OLD
+	## get the first line. It will be something like this: ./slaveDB-1-relay-bin.000007
+	## get the second line. It will be a count number, like this: 127959737
+
+slaveDB-2> mysqlbinlog --start-position=127959737 $DB_DATA_PATH/slaveDB-1-relay-bin.000007 | mysql -u root -p
+	## The position and the filename are from the previous step
+
+slaveDB-2> cat $DB_PATH/master.info.OLD
+	## The second line will have the master replication file, like this: mysql-bin.000355
+	## The third line will have the master file position, like this: 803022526
+	
+slaveDB-2 mysql> change master TO MASTER_HOST='masterDB.tld',MASTER_USER='replication_user',MASTER_PASSWORD='<NewPassword>',MASTER_LOG_FILE='mysql-bin.000355',MASTER_LOG_POS=803022526,MASTER_PORT=3306;
+	## Need to fill in replication password, log file name, and log position
+	## Get the values for the log file name and log position from catting the master.info.OLD file in previous steps
+	## Any databases that need to be skipped during replication will be configured in the my.cnf file on the slave machine
+slaveDB-2 mysql> start slave;
+slaveDB-2 mysql> show slave status\G
+slaveDB-2 mysql> \q
+
+## If everything looks good, then you are almost done
+slaveDB-2> service mysql stop
+slaveDB-2> rm -f $DB_PATH/master.info.OLD $DB_PATH/relay-log.info.OLD
+
+slaveDB-2> vim /etc/init.d/mysql
+		## Change other_args line (around line 109) to
+		other_args="$*"
+slaveDB-2> service mysql start
+slaveDB-2> mysql -u root -p -e "SHOW SLAVE STATUS\G"
+
+slaveDB-1> vim /etc/xinetd.d/rsync
+	## change the disable line to yes
+slaveDB-1> kill $(cat /var/run/rsync.pid)
+slaveDB-1> ls -l /var/run/rsync*
+	## clean up anything left behind
