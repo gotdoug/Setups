@@ -1,0 +1,147 @@
+Proposed Steps
+################################################################################################
+## This is a basic setup to get master-slave replication working in mysql when the master
+## already has data, and can't be taken offline for a long period of time.
+################################################################################################
+
+################################################################################################
+## if there is not direct root access, either on command line, or root in the DB,
+## some of these commands might need to change, slightly.
+################################################################################################
+
+################################################################################################
+## Before starting, make sure the config files for both the master and the slave are the same,
+## except for the server_id field, and any dbs that will be ignored, with
+## replicate-ignore-db= config values
+################################################################################################
+
+################################################################################################
+## Set up rsync daemon on slaveDB and a6p to receive the updates.
+masterDB> vim /etc/rsyncd.conf
+	max connections = 2
+	log file = /var/log/rsync.log
+	pid file = /var/run/rsync.pid
+	lock file = /var/run/rsync.lock
+	timeout = 300
+
+	[DB]
+	comment = "Syncing DB files"
+	path = /path/to/database/files
+	uid = root
+	gid = root
+	list = true
+	use chroot = no
+	read only = yes
+	list = yes
+	hosts allow = XXX.XXX.XXX.XXX/255.255.255.255 ## this is the ip address of slaveDB
+
+masterDB> vim /etc/xinetd.d/rsync
+	# default: off
+	# description: The rsync server is a good addition to an ftp server, as it \
+	#       allows crc checksumming etc.
+	service rsync
+	{
+        disable 		= no
+        flags           = IPv6
+        socket_type     = stream
+        wait            = no
+        user            = root
+        server          = /usr/bin/rsync
+        server_args     = --daemon
+        log_on_failure  += USERID
+	}	
+
+masterDB> rsync --daemon
+##
+################################################################################################
+
+## These will need to change for your systems
+masterDB> export DB_PATH="/path/to/database/config" ## This is the location of config files, usually /etc/
+masterDB> export DB_DATA_PATH="/path/to/database/files" ## This is the location of the database files themselves, usually /var/lib/mysql
+
+slaveDB> export DB_PATH="/path/to/database/config" ## This is the location of config files, usually /etc/
+slaveDB> export DB_DATA_PATH="/path/to/database/files" ## This is the location of the database files themselves, usually /var/lib/mysql
+
+masterDB> mysql -u root -p
+	SET PASSWORD FOR 'replication_user'@'%' = PASSWORD('NewPassword');
+	FLUSH PRIVILEGES;
+	\q
+
+Used for reference:
+http://mah.everybody.org/docs/mysql-rsync
+https://www.stephenrlang.com/2016/08/setting-up-mysql-master-slave-replication-with-rsync/
+
+slaveDB> service mysql stop
+slaveDB> cd $DB_PATH
+slaveDB> vim my.cnf ## Make sure server_id is NOT 1 (1 will be the master, and this id has to be unique)
+				## If the binlog_format was anything else, change it here
+				## Change binlog_format to MIXED, just in case this becomes a master at some point
+slaveDB> mysql -u root -p -e "STOP SLAVE"
+slaveDB> service mysql stop
+
+masterDB> cd $DB_PATH
+masterDB> vim my.cnf ## Change binlog_format to MIXED
+
+## Pull DBs from masterDB to slaveDB
+slaveDB> rsync -a --inplace --progress --exclude 'mysql' --exclude 'performance_schema' --exclude 'information_schema' --exclude 'sys' --exclude 'test' --exclude=<master_db_name>* --exclude master.info --exclude=relay-log.info root@masterDB.sys.tld::DB $DB_DATA_PATH
+	## This might take a while
+	
+#############################################################
+# After initial copy over from master to slave has finished
+#############################################################
+
+masterDB> mysql -u root -p ## Enter mysql
+masterDB mysql> SET GLOBAL binlog_format = 'MIXED';
+	## This is just in case your server is not set up in MIXED mode, by default
+masterDB mysql> show variables like 'binlog_format';
+	## Just confirm that the change took place in the db engine
+masterDB mysql> FLUSH TABLES WITH READ LOCK; ## DO NOT END THIS SESSION, USE ANOTHER SESSION GOING FORWARD
+	## Leave the client from which you issued the FLUSH TABLES statement running so that the read lock remains in effect. If you exit the client, the lock is released.
+
+## New terminal
+masterDB #2> cd $DB_PATH
+masterDB #2> mysql -u root -p -e "SHOW MASTER STATUS;"
+	## Keep these numbers, specifically the file name and the Position #
+masterDB #2> service mysql stop
+
+## Pull changes from masterDB to slaveDB
+slaveDB> rsync -a --inplace --progress --exclude 'mysql' --exclude 'performance_schema' --exclude 'information_schema' --exclude 'sys' --exclude 'test' --exclude=<master_db_name>* --exclude master.info --exclude=relay-log.info root@masterDB.sys.tld::DB $DB_DATA_PATH
+	## Hopefully this doesn't take too long, as only copying the changes
+
+masterDB #2> service mysql start
+masterDB #2> mysql -u root -p -e "UNLOCK TABLES;"
+	## This should have happened when the db started back up, but just to be sure
+
+slaveDB> cd $DB_PATH
+slaveDB> rm -f data/master.info data/relay-log.info data/auto.cnf
+slaveDB> vim /etc/init.d/mysql
+		## Change other_args line (around line 109) to
+		other_args="--skip-slave-start $*"
+slaveDB> service mysql start
+slaveDB> mysql -u root -p
+	## go into mysql prompt
+slaveDB mysql> stop slave;
+	## just ensures that is hasn't started somehow
+
+slaveDB mysql> change master TO MASTER_HOST='masterDB',MASTER_USER='replication_user',MASTER_PASSWORD='<NewPassword>',MASTER_LOG_FILE='',MASTER_LOG_POS=,MASTER_PORT=3306;
+	## Need to fill in replication password, log file name, and log position
+	## Get the values for the log file name and log position from the SHOW MASTER STATUS on masterDB earlier
+	## Make sure to change any other valeus that do not match your setup
+	## Any databases that need to be skipped during replication will be configured in the my.cnf file on the slave machine
+slaveDB mysql> start slave;
+slaveDB mysql> show slave status\G
+slaveDB mysql> \q
+
+## If everything looks good, then you are almost done
+slaveDB> service mysql stop
+slaveDB> vim /etc/init.d/mysql
+		## Change other_args line (around line 109) to
+		other_args="$*"
+slaveDB> service mysql start
+slaveDB> mysql -u root -p -e "SHOW SLAVE STATUS\G"
+
+masterDB> vim /etc/xinetd.d/rsync
+	## change the disable line to yes
+masterDB> kill $(cat /var/run/rsync.pid)
+masterDB> ls -l /var/run/rsync*
+	## clean up anything left behind
